@@ -44,7 +44,7 @@ contract Escrow{
 
     //fucntion to deposit earnest
     function depositEarnest()public payable{
-
+     require(msg.value >= escrowAmount,"Amount is less than escrow amount");
     }
 
     //get balance
