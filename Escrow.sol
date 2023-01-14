@@ -1,131 +1,105 @@
-//tests for Escrow contract
+//SPDX-License-Identifier: MIT
+pragma solidity ^0.8.17;
 
-//get expect from "chai" assertion library
-const {expect}  = require("chai");
-
-//get ethers from hardhat
-const {ethers} = require("hardhat");
-
-//1 eth is 10^18 wei so instead of always specifying that big amount we can create a function with tools using hardhat
-//here tokens will be equal to  1 ether value
-const tokens = (n) => {
-    return ethers.utils.parseUints(n.toString(),"ether")
+//use an interface to get the functions that we need from the erc721 contract
+interface IERC721{
+     
+    //function to transfer NFT
+    function transferFrom(address _from,address _to,uint _id )external;
 }
 
-const ether = tokens
 
-//describe block inside we write tests , describe("contract name", () => {})
-describe("RealEstate", ()=>{
+contract Escrow{
 
-    //get the variables outside so we can reuse it
-    let realEstate,escrow,seller,deployer,buyer,lender,inspector;
-    let purchasePrice = ether(100);
-    let escrowAmount = ether(20);
+    //variables to store nftID , address, seller, buyer, lender, inspector purchasePrice, escrowAmount
+    address public nftAddress;
+    uint public nftID;
+    uint public purchasePrice;
+    uint public escrowAmount;
+    address payable public  seller;
+    address payable public  buyer;
+    address public inspector;
+    address public lender;
+    bool public inspectionPassed = false;
+    mapping(address => bool) public approveSale;
 
-    //nftID wills start with 1, so first minted NFT will have ID 
-    let nftID = 1;
+    //recieve to make contract recieve funds
+    receive() external payable{}
 
-    //Do this before executing each test ie 'let' block
-    beforeEach(async() => {
-    
-    //get the accounts, these are signers and not account addresses
-    account = await ethers.getSigners();
-    deployer = account[0];
-    seller = deployer;
-    buyer = account[1];
-    inspector = account[2];
-    lender = account[3];
+    //create a constructor to initialize the nftID, nftAddress,seller, buyer, lender, inspector purchasePrice, escrowAmount we need it to access the NFT
+    constructor(address _nftAddress, 
+        uint _nftID,
+        uint _purchasePrice,
+        uint _escrowAmount,
+        address payable _seller, 
+        address payable _buyer,
+        address _inspector,
+        address _lender
+    )
+        {
+        nftAddress = _nftAddress;
+        nftID = _nftID;
+        purchasePrice = _purchasePrice;
+        escrowAmount = _escrowAmount;
+        seller = _seller;
+        buyer = _buyer;
+        inspector = _inspector;
+        lender = _lender;
+    }
 
-    //Load contracts
-    RealEstate = await ethers.getContractFactory("RealEstate");
-    Escrow = await ethers.getContractFactory("Escrow");
+    //modifier for operations only buyer can perform
+    modifier onlyBuyer(){
+        require(msg.sender == buyer, "Only buyer can do this");
+        _;
+    }
 
-    //deploy contracts
-    realEstate = await RealEstate.deploy();
+    //modifier for operations only buyer can perform
+    modifier onlyInspector(){
+        require(msg.sender == inspector, "Only inspector can do this");
+        _;
+    }
 
-    //while deploying we need to pass the nftAddress, nftID, seller, buyer, lender, inspector purchasePrice, escrowAmount as constructor parameters
-    //realEstate contracts address is the nft address
-    escrow = await Escrow.deploy( 
-    realEstate.address, 
-    nftID,
-    purchasePrice,
-    escrowAmount,
-    seller.address, 
-    buyer.address,
-    inspector.address,
-    lender.address);
+    //function to change inspectionPassed
+    function setInspectionPassed(bool _inspectionPassed)public{
+        inspectionPassed = _inspectionPassed;
+    }
 
-    //before a transfer to buyer can happen the seller needs to approve it
-    //the '.connect()' helps to specify whitch account are we using
-    transaction = await realEstate.connect(seller).approve(escrow.address,nftID);
-    await transaction.wait();
+    //fucntion to deposit earnest
+    function depositEarnest()public payable onlyBuyer{
+        require(msg.value >= escrowAmount,"amount is less than escrow amount");
+    }
 
-    })
+    //get balance
+    function getBalance()public view returns(uint){
+        return address(this).balance;
+    }
 
-    describe("deployment", async()=>{
+    //function to approve sale by actors
+    function approvePropertySale()public {
+        approveSale[msg.sender] = true;
+    }
 
-        //chech if seller has an NFT, ie is seller the owner of NFT created in RealEstate contract
-        it("checks if seller has the NFT", async()=>{
+    //function to transfer NFT from seller to buyer
+    function finalizeSale()public {
 
-            //the ownerOf() is from ERC721 contract
-            expect(await realEstate.ownerOf(nftID)).to.equal(seller.address);
-        })
-    })
-    
-    describe("Selling real estate", async() =>{
+        //must pass inspection
+        require(inspectionPassed,"inspection not passed");
 
-        it("executes a succesfull transactio", async()=>{
+        //must be appproved by seller,lender,buyer
+        require(approveSale[buyer],"Buyer must approve sale");
+        require(approveSale[seller],"Seller must approve sale");
+        require(approveSale[lender],"Lender must approve sale");
 
-            //seller should be nft owner before transaction
-            expect(await realEstate.ownerOf(nftID)).to.equal(seller.address);
+        //there must be enough funds to do sale
+        require(address(this).balance >= purchasePrice, "Not enough funds in the contract");
+        
+        //transfer funds to seller
+        (bool success, ) = payable(seller).call{value : address(this).balance}("");
+        require(success,"Funds not transferred to seller");
+        
+        //use the function from interface for transfer
+        //we need to pass the address of the contract
+        IERC721(nftAddress).transferFrom(seller, buyer, nftID);
 
-            //buyer deposits earnest amount, passed in as value to payable function
-            transaction = await escrow.connect(buyer).depositEarnest({value: escrowAmount});
-            await transaction.wait();
-
-            //check escrow balance
-            //getBalance() is hardhat provided.. i think
-            let balance = await escrow.getBalance();
-            //convert the wei to ether and display
-            console.log("escrow balance", ethers.utils.formatEther(balance));
-
-            //change inspection passed
-            transaction = await escrow.connect(inspector).setInspectionPassed(true);
-            await transaction.wait();
-            console.log("inspector updates status");
-
-            //buyer approves sale
-            transaction = await escrow.connect(buyer).approvePropertySale();
-            await transaction.wait();
-            console.log("buyer approves sale");
-
-            //seller approves sale
-            transaction = escrow.connect(seller)
-            await transaction.wait();
-            console.log("seller approves sale");
-
-            //lender funds the contract with remaining 80%
-            //sendTransaction() is provided by hardhat
-            transaction = await lender.sendTransaction{to: escrow.address, value: ether(80)});
-            //lender approves sale
-            transaction = escrow.connect(lender)
-            await transaction.wait();
-            console.log("lender approves sale");
-
-            //transfer nft & finalize sale
-            transaction = await escrow.connect(buyer).finalizeSale();
-            await transaction.wait();
-
-            //buyer should be nft owner after transfer
-            expect(await realEstate.ownerOf(nftID)).to.equal(buyer.address);
-
-            //expect seller to recieve funds
-            balance = await ethers.provider.getBalance(seller.address);
-            console.log("seller balance : ", ethers.utils.formatEther(balance))
-            //the exact balancce of seller can vary due to fee and all but as hardhat custom provide 10k ether to each acccount
-            //we check if balancce is greater than 10k + 99
-            expect(balance).to.be.above(ether(10099));
-        })
-    })
-
-})
+    }
+}
