@@ -84,9 +84,33 @@ describe("RealEstate", ()=>{
             await transaction.wait();
 
             //check escrow balance
+            //getBalance() is hardhat provided.. i think
             let balance = await escrow.getBalance();
             //convert the wei to ether and display
             console.log("escrow balance", ethers.utils.formatEther(balance));
+
+            //change inspection passed
+            transaction = await escrow.connect(inspector).setInspectionPassed(true);
+            await transaction.wait();
+            console.log("inspector updates status");
+
+            //buyer approves sale
+            transaction = await escrow.connect(buyer).approvePropertySale();
+            await transaction.wait();
+            console.log("buyer approves sale");
+
+            //seller approves sale
+            transaction = escrow.connect(seller)
+            await transaction.wait();
+            console.log("seller approves sale");
+
+            //lender funds the contract with remaining 80%
+            //sendTransaction() is provided by hardhat
+            transaction = await lender.sendTransaction{to: escrow.address, value: ether(80)});
+            //lender approves sale
+            transaction = escrow.connect(lender)
+            await transaction.wait();
+            console.log("lender approves sale");
 
             //transfer nft & finalize sale
             transaction = await escrow.connect(buyer).finalizeSale();
@@ -94,6 +118,13 @@ describe("RealEstate", ()=>{
 
             //buyer should be nft owner after transfer
             expect(await realEstate.ownerOf(nftID)).to.equal(buyer.address);
+
+            //expect seller to recieve funds
+            balance = await ethers.provider.getBalance(seller.address);
+            console.log("seller balance : ", ethers.utils.formatEther(balance))
+            //the exact balancce of seller can vary due to fee and all but as hardhat custom provide 10k ether to each acccount
+            //we check if balancce is greater than 10k + 99
+            expect(balance).to.be.above(ether(10099));
         })
     })
 
