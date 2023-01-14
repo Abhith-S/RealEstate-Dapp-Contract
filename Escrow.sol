@@ -20,6 +20,11 @@ contract Escrow{
     address payable public  buyer;
     address public inspector;
     address public lender;
+    bool public inspectionPassed = false;
+    mapping(address => bool) public approveSale;
+
+    //recieve to make contract recieve funds
+    receive() external payable{}
 
     //create a constructor to initialize the nftID, nftAddress,seller, buyer, lender, inspector purchasePrice, escrowAmount we need it to access the NFT
     constructor(address _nftAddress, 
@@ -42,9 +47,26 @@ contract Escrow{
         lender = _lender;
     }
 
+    //modifier for operations only buyer can perform
+    modifier onlyBuyer(){
+        require(msg.sender == buyer, "Only buyer can do this");
+        _;
+    }
+
+    //modifier for operations only buyer can perform
+    modifier onlyInspector(){
+        require(msg.sender == inspector, "Only inspector can do this");
+        _;
+    }
+
+    //function to change inspectionPassed
+    function setInspectionPassed(bool _inspectionPassed)public{
+        inspectionPassed = _inspectionPassed;
+    }
+
     //fucntion to deposit earnest
-    function depositEarnest()public payable{
-     require(msg.value >= escrowAmount,"Amount is less than escrow amount");
+    function depositEarnest()public payable onlyBuyer{
+        require(msg.value >= escrowAmount,"amount is less than escrow amount");
     }
 
     //get balance
@@ -52,9 +74,29 @@ contract Escrow{
         return address(this).balance;
     }
 
+    //function to approve sale by actors
+    function approvePropertySale()public {
+        approveSale[msg.sender] = true;
+    }
+
     //function to transfer NFT from seller to buyer
     function finalizeSale()public {
 
+        //must pass inspection
+        require(inspectionPassed,"inspection not passed");
+
+        //must be appproved by seller,lender,buyer
+        require(approveSale[buyer],"Buyer must approve sale");
+        require(approveSale[seller],"Seller must approve sale");
+        require(approveSale[lender],"Lender must approve sale");
+
+        //there must be enough funds to do sale
+        require(address(this).balance >= purchasePrice, "Not enough funds in the contract");
+        
+        //transfer funds to seller
+        (bool success, ) = payable(seller).call{value : address(this).balance}("");
+        require(success,"Funds not transferred to seller");
+        
         //use the function from interface for transfer
         //we need to pass the address of the contract
         IERC721(nftAddress).transferFrom(seller, buyer, nftID);
